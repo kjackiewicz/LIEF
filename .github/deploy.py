@@ -8,10 +8,15 @@ import subprocess
 import shutil
 import json
 import requests
+import itertools
 from collections import defaultdict
 from datetime import datetime
 from mako.template import Template
 from enum import Enum, auto
+import twine
+
+from twine.settings import Settings as TwineSettings
+from twine.commands import upload as twine_upload
 
 class CI(Enum):
     UNKNOWN        = auto()
@@ -125,7 +130,7 @@ else:
 CI_PRETTY_NAME = pretty_ci_name(CURRENT_CI)
 logger.info("CI: %s", CI_PRETTY_NAME)
 
-ALLOWED_BRANCHES = {"master", "deploy", "devel"}
+ALLOWED_BRANCHES = {"master", "deploy", "devel", "feat/gitlab-packages"}
 BRANCH_NAME = get_branch(CURRENT_CI)
 TAG_NAME    = get_tag(CURRENT_CI)
 IS_TAGGED   = TAG_NAME is not None and len(TAG_NAME) > 0
@@ -205,6 +210,27 @@ INDEX_TEMPLATE = r"""
 </html>
 """
 
+class NotFound(Exception):
+    pass
+
+def delete_package(info):
+    logger.info("Deleting %s [%s] (%s)", info["package_type"], info["name"], info["version"])
+    url = "https://gitlab.com/api/v4/projects/{project_id}/packages/{id}"
+    headers = {
+        "PRIVATE-TOKEN": LIEF_GITLAB_TOKEN
+    }
+
+    url = url.format(
+        project_id=GITLAB_PROJECT_ID,
+        id=info["id"],
+    )
+    r = requests.delete(url, headers=headers)
+
+    if r.status_code != 204:
+        logger.error("Error while deleting the package (%s)", r.text)
+        raise NotFound
+
+
 def delete_file(file_info):
     logger.info("Deleting %s [%s]", file_info["file_name"], file_info["created_at"])
     url = "https://gitlab.com/api/v4/projects/{project_id}/packages/{pkd_id}/package_files/{file_id}"
@@ -274,6 +300,47 @@ def push_file(file_path: str, pkg_name: str, version: str):
         sys.exit(1)
 
     return r.json()
+
+def is_pypi(info) -> bool:
+    return info["package_type"] == "pypi"
+
+def delete_pypi():
+    for pkg in filter(is_pypi, list_packages()):
+        try:
+            delete_package(pkg)
+        except NotFound:
+            continue
+
+def push_wheel(file_path: str, try_count: int = 3):
+    if try_count <= 0:
+        sys.exit(1)
+
+    url = "https://gitlab.com/api/v4/projects/{project_id}/packages/pypi"
+    url = url.format(project_id=GITLAB_PROJECT_ID)
+
+    settings: TwineSettings = TwineSettings(
+        username="romainthomas",
+        password=LIEF_GITLAB_TOKEN,
+        repository_url=url,
+        verbose=0
+    )
+    try:
+        twine_upload.upload(settings, [file_path])
+    except requests.exceptions.HTTPError as e:
+        logger.error("%s", e)
+        if e.response.status_code == 400:
+            logger.error("-> %s", e.response.text)
+            json_info = e.response.json()
+            if json_info.get("message", "") == "Validation failed: File name has already been taken":
+                delete_pypi()
+                return push_wheel(file_path, try_count - 1)
+
+    # Try to re-upload the file in the case of a race condition
+    try:
+        twine_upload.upload(settings, [file_path])
+    except requests.exceptions.HTTPError as e:
+        return
+    logger.info("%s uploaded!", file_path)
 
 
 def process_pkg_files(files):
@@ -359,13 +426,10 @@ if IS_TAGGED:
 
 for file in DIST_DIR.glob("*.whl"):
     logger.debug("[WHEEL] Uploading '%s'", file.as_posix())
-    push_file(file.as_posix(), gitlab_packages_name, gitlab_packages_version)
+    push_wheel(file.as_posix())
+    #push_file(file.as_posix(), gitlab_packages_name, gitlab_packages_version)
 
-for file in BUILD_DIR.glob("*.zip"):
-    logger.debug("[SDK  ] Uploading '%s'", file.as_posix())
-    push_file(file.as_posix(), gitlab_packages_name, gitlab_packages_version)
-
-for file in BUILD_DIR.glob("*.tar.gz"):
+for file in itertools.chain(BUILD_DIR.glob("*.zip"), BUILD_DIR.glob("*.tar.gz")):
     logger.debug("[SDK  ] Uploading '%s'", file.as_posix())
     push_file(file.as_posix(), gitlab_packages_name, gitlab_packages_version)
 

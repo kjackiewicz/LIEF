@@ -54,7 +54,7 @@ jobs:
           LIEF_GITLAB_TOKEN: ${{ secrets.LIEF_GITLAB_TOKEN }}
         shell: bash
         run: |
-          python -m pip install --upgrade requests mako
+          python -m pip install --upgrade requests mako twine
           python .github/deploy.py
 
 

@@ -113,5 +113,5 @@ jobs:
         GITHUB_REPOSITORY: ${{ env.GITHUB_REPOSITORY }}
         WSLENV: LIEF_AUTOMATIC_BUILDS_KEY:LIEF_AUTOMATIC_BUILDS_IV:LIEF_GITLAB_TOKEN:GITHUB_ACTIONS:GITHUB_WORKSPACE:GITHUB_REF:GITHUB_REPOSITORY
       run: |
-        python3 -m pip install --no-cache-dir --upgrade pip setuptools requests mako wheel
+        python3 -m pip install --no-cache-dir --upgrade pip setuptools requests mako wheel twine
         python3 .github/deploy.py
