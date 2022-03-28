@@ -183,7 +183,11 @@ DIST_DIR              = REPODIR / "dist"
 BUILD_DIR             = REPODIR / "build"
 
 # Gitlab
-GITLAB_PROJECT_ID = 34840840 # https://gitlab.com/lief-project/packages
+GITLAB_PROJECT_ID = int(os.getenv("GITLAB_PROJECT_ID", 0)) # https://gitlab.com/lief-project/packages
+
+if GITLAB_PROJECT_ID == 0:
+    logger.error("GITLAB_PROJECT_ID is not set!")
+    sys.exit(1)
 
 logger.debug("Working directory: %s", CI_CWD)
 
@@ -310,6 +314,14 @@ def delete_pypi():
             delete_package(pkg)
         except NotFound:
             continue
+
+def pypi_packages_to_remove():
+    pypi_packages = [p for p in list_packages() if is_pypi(p)]
+    sorted(pypi_packages, key=lambda e: e["created_at"])
+    pypi_packages.reverse()
+    if len(pypi_packages) <= 1:
+        return []
+    return pypi_packages[1:]
 
 def push_wheel(file_path: str, try_count: int = 3):
     if try_count <= 0:
@@ -449,6 +461,9 @@ for file in keep:
     fname = file["file_name"]
     fdate = file["created_at"]
     logger.info("  [KEEP  ]: %s (%s)", fname, fdate)
+
+for pkg in pypi_packages_to_remove():
+    delete_package(pkg)
 
 #####################
 # Clone package repo
